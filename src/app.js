@@ -18,22 +18,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.resolve(__dirname, '..', 'uploads')));
 
-// Ruta raíz de bienvenida y mapa de la API
-app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'OK',
-    mensaje: 'Bienvenido a la API de El Chiringuito de Lukas 🐾',
-    rutas_principales: {
-      salud: 'GET /api/health',
-      categorias: 'GET /api/categorias',
-      productos: 'GET /api/productos',
-      login: 'POST /api/auth/login',
-      admin_productos: 'GET /api/admin/productos',
-      admin_pedidos: 'GET /api/admin/pedidos',
-    },
-  });
-});
-
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
