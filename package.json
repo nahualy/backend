@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "sequelize": "sequelize"
+    "sequelize": "sequelize",
+    "generar-token": "node scripts/obtener-token.js"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +19,7 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
+    "googleapis": "^182.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "pg": "^8.23.0",
