@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { Categoria, Producto, VarianteProducto } from '../models/index.js';
+import { Categoria, Producto } from '../models/index.js';
 
 export const obtenerIdsCategoriasDescendientes = async (categoriaPadreId) => {
   const ids = [parseInt(categoriaPadreId, 10)];
@@ -106,15 +106,19 @@ export const getProductos = async (req, res, next) => {
           as: 'categoria',
           attributes: ['id', 'nombre'],
         },
-        {
-          model: VarianteProducto,
-          as: 'variantes',
-          where: { activo: true },
-          required: false,
-          attributes: ['id', 'talla', 'color', 'stock', 'sku'],
-        },
       ],
       distinct: true,
+    });
+
+    const productosFormateados = rows.map((p) => {
+      const prodJson = p.toJSON();
+      const variantesActivas = Array.isArray(prodJson.variantes)
+        ? prodJson.variantes.filter((v) => v.activo !== false)
+        : [];
+      return {
+        ...prodJson,
+        variantes: variantesActivas,
+      };
     });
 
     return res.status(200).json({
@@ -123,7 +127,7 @@ export const getProductos = async (req, res, next) => {
       pagina: page,
       totalPaginas: Math.ceil(count / limit),
       limite: limit,
-      productos: rows,
+      productos: productosFormateados,
     });
   } catch (error) {
     next(error);
@@ -145,13 +149,6 @@ export const getProductoById = async (req, res, next) => {
           as: 'categoria',
           attributes: ['id', 'nombre'],
         },
-        {
-          model: VarianteProducto,
-          as: 'variantes',
-          where: { activo: true },
-          required: false,
-          attributes: ['id', 'talla', 'color', 'stock', 'sku'],
-        },
       ],
     });
 
@@ -162,9 +159,14 @@ export const getProductoById = async (req, res, next) => {
       });
     }
 
+    const prodJson = producto.toJSON();
+    prodJson.variantes = Array.isArray(prodJson.variantes)
+      ? prodJson.variantes.filter((v) => v.activo !== false)
+      : [];
+
     return res.status(200).json({
       error: false,
-      producto,
+      producto: prodJson,
     });
   } catch (error) {
     next(error);

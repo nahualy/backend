@@ -1,4 +1,4 @@
-import { Producto, VarianteProducto, DetallePedido } from '../models/index.js';
+import { Producto, DetallePedido } from '../models/index.js';
 
 export const devolverStockPedido = async (pedidoOrId, transaction) => {
   const pedidoId = typeof pedidoOrId === 'object' ? pedidoOrId.id : pedidoOrId;
@@ -9,22 +9,33 @@ export const devolverStockPedido = async (pedidoOrId, transaction) => {
   });
 
   for (const detalle of detalles) {
-    if (detalle.variante_id) {
-      const variante = await VarianteProducto.findByPk(detalle.variante_id, {
+    if (detalle.variante_sku) {
+      const producto = await Producto.findByPk(detalle.producto_id, {
         transaction,
         lock: true,
       });
-      if (variante) {
-        variante.stock = (variante.stock || 0) + detalle.cantidad;
-        await variante.save({ transaction });
+
+      if (producto) {
+        const variantes = Array.isArray(producto.variantes)
+          ? producto.variantes.map((v) => ({ ...v }))
+          : [];
+
+        const index = variantes.findIndex((v) => v.sku === detalle.variante_sku);
+        if (index !== -1) {
+          variantes[index].stock = (Number(variantes[index].stock) || 0) + detalle.cantidad;
+          producto.variantes = [...variantes];
+          producto.changed('variantes', true);
+          await producto.save({ transaction });
+        }
       }
     } else if (detalle.producto_id) {
       const producto = await Producto.findByPk(detalle.producto_id, {
         transaction,
         lock: true,
       });
+
       if (producto && producto.stock !== null) {
-        producto.stock = (producto.stock || 0) + detalle.cantidad;
+        producto.stock = (Number(producto.stock) || 0) + detalle.cantidad;
         await producto.save({ transaction });
       }
     }

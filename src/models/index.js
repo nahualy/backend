@@ -4,7 +4,6 @@ import sequelize from '../config/db.js';
 import defineUsuario from './Usuario.js';
 import defineCategoria from './Categoria.js';
 import defineProducto from './Producto.js';
-import defineVarianteProducto from './VarianteProducto.js';
 import definePedido from './Pedido.js';
 import defineDetallePedido from './DetallePedido.js';
 import definePago from './Pago.js';
@@ -15,7 +14,6 @@ const modelDefinitions = [
   defineUsuario,
   defineCategoria,
   defineProducto,
-  defineVarianteProducto,
   definePedido,
   defineDetallePedido,
   definePago,
@@ -39,7 +37,6 @@ export const {
   Usuario,
   Categoria,
   Producto,
-  VarianteProducto,
   Pedido,
   DetallePedido,
   Pago,

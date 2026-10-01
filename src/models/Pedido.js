@@ -26,6 +26,10 @@ export default (sequelize) => {
         type: DataTypes.STRING(150),
         allowNull: false,
       },
+      email_cliente: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
       telefono_cliente: {
         type: DataTypes.STRING(50),
         allowNull: false,
@@ -42,7 +46,7 @@ export default (sequelize) => {
       total: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
-        defaultValue: 0.00,
+        defaultValue: 0.0,
       },
       notas: {
         type: DataTypes.TEXT,

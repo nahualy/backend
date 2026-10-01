@@ -1,6 +1,8 @@
-import { sequelize, Pedido, DetallePedido, Pago, Producto, VarianteProducto, Usuario } from '../models/index.js';
+import { sequelize, Pedido, DetallePedido, Pago, Producto, Usuario } from '../models/index.js';
 import { devolverStockPedido } from '../services/pedido.service.js';
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
+import { enviarWhatsApp } from '../services/whatsapp.service.js';
+import { enviarCorreo } from '../services/email.service.js';
 
 export const getPedidosAdmin = async (req, res, next) => {
   try {
@@ -75,11 +77,6 @@ export const getPedidoByIdAdmin = async (req, res, next) => {
               as: 'producto',
               attributes: ['id', 'nombre', 'foto', 'precio'],
             },
-            {
-              model: VarianteProducto,
-              as: 'variante',
-              attributes: ['id', 'talla', 'color', 'sku'],
-            },
           ],
         },
         {
@@ -124,6 +121,7 @@ export const getPagosPendientes = async (req, res, next) => {
           attributes: [
             'id',
             'nombre_cliente',
+            'email_cliente',
             'telefono_cliente',
             'direccion_entrega',
             'total',
@@ -186,11 +184,36 @@ export const aprobarPago = async (req, res, next) => {
     const mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, tu pago para el pedido #${pedido.id} fue APROBADO. Tu pedido está confirmado y pronto será procesado. ¡Gracias por tu compra en El Chiringuito de Lukas! 🐾`;
     const link_whatsapp = generarLinkWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
 
+    let resWhatsApp = { exito: false };
+    try {
+      resWhatsApp = await enviarWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
+    } catch (_) {}
+
+    let resEmail = { exito: false };
+    if (pedido.email_cliente) {
+      try {
+        const asunto = `¡Pago Aprobado! Tu pedido #${pedido.id} está confirmado - El Chiringuito de Lukas`;
+        const html = `
+          <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+            <h2 style="color: #2e7d32;">¡Pago Aprobado! 🎉</h2>
+            <p>Hola <strong>${pedido.nombre_cliente}</strong>,</p>
+            <p>Tu comprobante de pago para el pedido <strong>#${pedido.id}</strong> ha sido verificado y aprobado con éxito.</p>
+            <p>Tu pedido ya se encuentra confirmado y pasará pronto a preparación.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 0.9em; color: #666;">Gracias por confiar en <strong>El Chiringuito de Lukas</strong> 🐾</p>
+          </div>
+        `;
+        resEmail = await enviarCorreo(pedido.email_cliente, asunto, html);
+      } catch (_) {}
+    }
+
     return res.status(200).json({
       error: false,
       mensaje: 'Pago aprobado y pedido confirmado exitosamente',
       pago,
       pedido,
+      whatsapp_enviado: Boolean(resWhatsApp.exito),
+      correo_enviado: Boolean(resEmail.exito),
       link_whatsapp,
     });
   } catch (error) {
@@ -202,6 +225,10 @@ export const rechazarPago = async (req, res, next) => {
   let transaction;
   try {
     const { id } = req.params;
+    const { motivo_rechazo } = req.body;
+
+    const MOTIVOS_VALIDOS = ['duplicado', 'monto_incorrecto', 'no_recibido', 'otro'];
+    const motivoFinal = MOTIVOS_VALIDOS.includes(motivo_rechazo) ? motivo_rechazo : 'otro';
 
     const pago = await Pago.findByPk(id, {
       include: [{ model: Pedido, as: 'pedido' }],
@@ -230,6 +257,7 @@ export const rechazarPago = async (req, res, next) => {
     }
 
     pago.estado = 'rechazado';
+    pago.motivo_rechazo = motivoFinal;
     pago.verificado_por = req.usuario.id;
     pago.fecha_verificacion = new Date();
     await pago.save();
@@ -255,10 +283,36 @@ export const rechazarPago = async (req, res, next) => {
 
       mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, lamentablemente tu pedido #${pedido.id} fue cancelado tras varios intentos de pago no válidos. Si deseas realizar el pedido nuevamente, contáctanos.`;
     } else {
-      mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, tu comprobante de pago para el pedido #${pedido.id} no pudo ser validado. Por favor envíanos un nuevo comprobante para continuar con tu pedido. Te quedan ${intentosRestantes} intento(s).`;
+      mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, tu comprobante de pago para el pedido #${pedido.id} no pudo ser validado (motivo: ${motivoFinal}). Por favor envíanos un nuevo comprobante para continuar con tu pedido. Te quedan ${intentosRestantes} intento(s).`;
     }
 
     const link_whatsapp = generarLinkWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
+
+    let resWhatsApp = { exito: false };
+    try {
+      resWhatsApp = await enviarWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
+    } catch (_) {}
+
+    let resEmail = { exito: false };
+    if (pedido.email_cliente) {
+      try {
+        const asunto = pedidoCancelado
+          ? `Pedido #${pedido.id} cancelado por intentos de pago agotados - El Chiringuito de Lukas`
+          : `Comprobante de pago rechazado para el pedido #${pedido.id} - El Chiringuito de Lukas`;
+        const html = `
+          <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+            <h2 style="color: #c62828;">${pedidoCancelado ? 'Pedido Cancelado' : 'Comprobante no validado'}</h2>
+            <p>Hola <strong>${pedido.nombre_cliente}</strong>,</p>
+            <p>${mensajeWhatsApp}</p>
+            <p><strong>Motivo:</strong> ${motivoFinal}</p>
+            ${!pedidoCancelado ? `<p>Te quedan <strong>${intentosRestantes}</strong> intento(s) para subir un comprobante válido.</p>` : ''}
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 0.9em; color: #666;">El Chiringuito de Lukas 🐾</p>
+          </div>
+        `;
+        resEmail = await enviarCorreo(pedido.email_cliente, asunto, html);
+      } catch (_) {}
+    }
 
     return res.status(200).json({
       error: false,
@@ -268,6 +322,8 @@ export const rechazarPago = async (req, res, next) => {
       pago,
       pedido_cancelado: pedidoCancelado,
       intentos_restantes: intentosRestantes,
+      whatsapp_enviado: Boolean(resWhatsApp.exito),
+      correo_enviado: Boolean(resEmail.exito),
       link_whatsapp,
     });
   } catch (error) {
@@ -312,10 +368,34 @@ export const cancelarPedido = async (req, res, next) => {
     const mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, tu pedido #${pedido.id} ha sido cancelado. Si tienes dudas, contáctanos.`;
     const link_whatsapp = generarLinkWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
 
+    let resWhatsApp = { exito: false };
+    try {
+      resWhatsApp = await enviarWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
+    } catch (_) {}
+
+    let resEmail = { exito: false };
+    if (pedido.email_cliente) {
+      try {
+        const asunto = `Tu pedido #${pedido.id} ha sido cancelado - El Chiringuito de Lukas`;
+        const html = `
+          <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+            <h2 style="color: #c62828;">Pedido Cancelado</h2>
+            <p>Hola <strong>${pedido.nombre_cliente}</strong>,</p>
+            <p>Tu pedido <strong>#${pedido.id}</strong> ha sido cancelado. Si tienes alguna duda o consideras que se trata de un error, contáctanos.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 0.9em; color: #666;">El Chiringuito de Lukas 🐾</p>
+          </div>
+        `;
+        resEmail = await enviarCorreo(pedido.email_cliente, asunto, html);
+      } catch (_) {}
+    }
+
     return res.status(200).json({
       error: false,
       mensaje: 'Pedido cancelado exitosamente y stock reincorporado al inventario',
       pedido,
+      whatsapp_enviado: Boolean(resWhatsApp.exito),
+      correo_enviado: Boolean(resEmail.exito),
       link_whatsapp,
     });
   } catch (error) {

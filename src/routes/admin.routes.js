@@ -16,8 +16,8 @@ router.put('/productos/:id', uploadProducto.single('foto'), adminProductoControl
 router.delete('/productos/:id', adminProductoController.eliminarProducto);
 
 router.post('/productos/:id/variantes', adminProductoController.crearVariante);
-router.put('/variantes/:id', adminProductoController.actualizarVariante);
-router.delete('/variantes/:id', adminProductoController.eliminarVariante);
+router.put('/productos/:id/variantes/:sku', adminProductoController.actualizarVariante);
+router.delete('/productos/:id/variantes/:sku', adminProductoController.eliminarVariante);
 
 router.get('/pedidos', adminPedidoController.getPedidosAdmin);
 router.get('/pedidos/:id', adminPedidoController.getPedidoByIdAdmin);

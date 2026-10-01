@@ -7,10 +7,6 @@ export default (sequelize) => {
         as: 'categoria',
         foreignKey: 'categoria_id',
       });
-      Producto.hasMany(models.VarianteProducto, {
-        as: 'variantes',
-        foreignKey: 'producto_id',
-      });
       Producto.hasMany(models.DetallePedido, {
         as: 'detalles_pedido',
         foreignKey: 'producto_id',
@@ -51,6 +47,11 @@ export default (sequelize) => {
         validate: {
           min: 0,
         },
+      },
+      variantes: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: [],
       },
       categoria_id: {
         type: DataTypes.INTEGER,

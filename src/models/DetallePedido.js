@@ -11,13 +11,6 @@ export default (sequelize) => {
         as: 'producto',
         foreignKey: 'producto_id',
       });
-      DetallePedido.belongsTo(models.VarianteProducto, {
-        as: 'variante',
-        foreignKey: {
-          name: 'variante_id',
-          allowNull: true,
-        },
-      });
     }
   }
 
@@ -45,13 +38,13 @@ export default (sequelize) => {
           key: 'id',
         },
       },
-      variante_id: {
-        type: DataTypes.INTEGER,
+      variante_sku: {
+        type: DataTypes.STRING,
         allowNull: true,
-        references: {
-          model: 'variantes_producto',
-          key: 'id',
-        },
+      },
+      variante_snapshot: {
+        type: DataTypes.JSONB,
+        allowNull: true,
       },
       cantidad: {
         type: DataTypes.INTEGER,

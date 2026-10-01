@@ -6,3 +6,5 @@ uploads/*
 !uploads/productos/.gitkeep
 !uploads/comprobantes/
 !uploads/comprobantes/.gitkeep
+.wwebjs_auth/
+.wwebjs_cache/

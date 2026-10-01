@@ -47,6 +47,10 @@ export default (sequelize) => {
         allowNull: false,
         defaultValue: 'pendiente',
       },
+      motivo_rechazo: {
+        type: DataTypes.ENUM('duplicado', 'monto_incorrecto', 'no_recibido', 'otro'),
+        allowNull: true,
+      },
       verificado_por: {
         type: DataTypes.INTEGER,
         allowNull: true,

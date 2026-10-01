@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { Producto, VarianteProducto, Categoria } from '../models/index.js';
+import { Producto, Categoria } from '../models/index.js';
 import { obtenerIdsCategoriasDescendientes } from './public.controller.js';
 
 export const getProductosAdmin = async (req, res, next) => {
@@ -38,11 +38,6 @@ export const getProductosAdmin = async (req, res, next) => {
           as: 'categoria',
           attributes: ['id', 'nombre'],
         },
-        {
-          model: VarianteProducto,
-          as: 'variantes',
-          attributes: ['id', 'talla', 'color', 'stock', 'sku', 'activo'],
-        },
       ],
       distinct: true,
     });
@@ -62,7 +57,7 @@ export const getProductosAdmin = async (req, res, next) => {
 
 export const crearProducto = async (req, res, next) => {
   try {
-    const { nombre, descripcion_corta, precio, categoria_id, stock } = req.body;
+    const { nombre, descripcion_corta, precio, categoria_id, stock, variantes } = req.body;
 
     if (!nombre || nombre.trim() === '') {
       return res.status(400).json({
@@ -107,6 +102,18 @@ export const crearProducto = async (req, res, next) => {
       }
     }
 
+    let parsedVariantes = [];
+    if (variantes) {
+      try {
+        parsedVariantes = typeof variantes === 'string' ? JSON.parse(variantes) : variantes;
+      } catch (_) {
+        return res.status(400).json({
+          error: true,
+          mensaje: 'El campo variantes debe ser un array JSON válido',
+        });
+      }
+    }
+
     const foto = req.file ? `/uploads/productos/${req.file.filename}` : null;
 
     const nuevoProducto = await Producto.create({
@@ -114,7 +121,8 @@ export const crearProducto = async (req, res, next) => {
       descripcion_corta: descripcion_corta ? descripcion_corta.trim() : null,
       foto,
       precio: parseFloat(precio),
-      stock: parsedStock,
+      stock: parsedVariantes.length > 0 ? null : parsedStock,
+      variantes: Array.isArray(parsedVariantes) ? parsedVariantes : [],
       categoria_id: parseInt(categoria_id, 10),
       activo: true,
     });
@@ -183,14 +191,10 @@ export const actualizarProducto = async (req, res, next) => {
       if (stock === null || stock === '') {
         producto.stock = null;
       } else {
-        const variantesActivas = await VarianteProducto.count({
-          where: {
-            producto_id: producto.id,
-            activo: true,
-          },
-        });
+        const tieneVariantesActivas =
+          Array.isArray(producto.variantes) && producto.variantes.some((v) => v.activo !== false);
 
-        if (variantesActivas > 0) {
+        if (tieneVariantesActivas) {
           return res.status(400).json({
             error: true,
             mensaje:
@@ -256,7 +260,7 @@ export const eliminarProducto = async (req, res, next) => {
 export const crearVariante = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { talla, color, stock, sku } = req.body;
+    const { talla, color, stock, sku, precio_override } = req.body;
 
     const producto = await Producto.findByPk(id);
     if (!producto) {
@@ -273,13 +277,15 @@ export const crearVariante = async (req, res, next) => {
       });
     }
 
-    const skuExiste = await VarianteProducto.findOne({
-      where: { sku: sku.trim() },
-    });
+    const variantes = Array.isArray(producto.variantes) ? [...producto.variantes] : [];
+    const skuExiste = variantes.some(
+      (v) => v.sku && v.sku.trim().toLowerCase() === sku.trim().toLowerCase()
+    );
+
     if (skuExiste) {
       return res.status(400).json({
         error: true,
-        mensaje: 'Ya existe una variante con ese SKU',
+        mensaje: 'Ya existe una variante con ese SKU en este producto',
       });
     }
 
@@ -294,24 +300,33 @@ export const crearVariante = async (req, res, next) => {
       }
     }
 
-    const nuevaVariante = await VarianteProducto.create({
-      producto_id: producto.id,
+    const nuevaVariante = {
+      sku: sku.trim(),
       talla: talla ? talla.trim() : null,
       color: color ? color.trim() : null,
       stock: parsedStock,
-      sku: sku.trim(),
+      precio_override:
+        precio_override !== undefined && precio_override !== null && precio_override !== ''
+          ? parseFloat(precio_override)
+          : null,
       activo: true,
-    });
+    };
+
+    variantes.push(nuevaVariante);
 
     if (producto.stock !== null) {
       producto.stock = null;
-      await producto.save();
     }
+
+    producto.variantes = [...variantes];
+    producto.changed('variantes', true);
+    await producto.save();
 
     return res.status(201).json({
       error: false,
       mensaje: 'Variante creada exitosamente',
       variante: nuevaVariante,
+      producto,
     });
   } catch (error) {
     next(error);
@@ -320,23 +335,38 @@ export const crearVariante = async (req, res, next) => {
 
 export const actualizarVariante = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { talla, color, stock, activo } = req.body;
+    const { id, sku } = req.params;
+    const { talla, color, stock, precio_override, activo } = req.body;
 
-    const variante = await VarianteProducto.findByPk(id);
-    if (!variante) {
+    const producto = await Producto.findByPk(id);
+    if (!producto) {
       return res.status(404).json({
         error: true,
-        mensaje: 'Variante no encontrada',
+        mensaje: 'Producto no encontrado',
+      });
+    }
+
+    const variantes = Array.isArray(producto.variantes)
+      ? producto.variantes.map((v) => ({ ...v }))
+      : [];
+
+    const index = variantes.findIndex(
+      (v) => v.sku && v.sku.trim().toLowerCase() === sku.trim().toLowerCase()
+    );
+
+    if (index === -1) {
+      return res.status(404).json({
+        error: true,
+        mensaje: `Variante con SKU "${sku}" no encontrada en este producto`,
       });
     }
 
     if (talla !== undefined) {
-      variante.talla = talla ? talla.trim() : null;
+      variantes[index].talla = talla ? talla.trim() : null;
     }
 
     if (color !== undefined) {
-      variante.color = color ? color.trim() : null;
+      variantes[index].color = color ? color.trim() : null;
     }
 
     if (stock !== undefined) {
@@ -347,19 +377,27 @@ export const actualizarVariante = async (req, res, next) => {
           mensaje: 'El stock debe ser un número entero mayor o igual a cero',
         });
       }
-      variante.stock = parsedStock;
+      variantes[index].stock = parsedStock;
+    }
+
+    if (precio_override !== undefined) {
+      variantes[index].precio_override =
+        precio_override !== null && precio_override !== '' ? parseFloat(precio_override) : null;
     }
 
     if (activo !== undefined) {
-      variante.activo = Boolean(activo);
+      variantes[index].activo = Boolean(activo);
     }
 
-    await variante.save();
+    producto.variantes = [...variantes];
+    producto.changed('variantes', true);
+    await producto.save();
 
     return res.status(200).json({
       error: false,
       mensaje: 'Variante actualizada exitosamente',
-      variante,
+      variante: variantes[index],
+      producto,
     });
   } catch (error) {
     next(error);
@@ -368,22 +406,37 @@ export const actualizarVariante = async (req, res, next) => {
 
 export const eliminarVariante = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { id, sku } = req.params;
 
-    const variante = await VarianteProducto.findByPk(id);
-    if (!variante) {
+    const producto = await Producto.findByPk(id);
+    if (!producto) {
       return res.status(404).json({
         error: true,
-        mensaje: 'Variante no encontrada',
+        mensaje: 'Producto no encontrado',
       });
     }
 
-    variante.activo = false;
-    await variante.save();
+    const variantes = Array.isArray(producto.variantes) ? [...producto.variantes] : [];
+    const index = variantes.findIndex(
+      (v) => v.sku && v.sku.trim().toLowerCase() === sku.trim().toLowerCase()
+    );
+
+    if (index === -1) {
+      return res.status(404).json({
+        error: true,
+        mensaje: `Variante con SKU "${sku}" no encontrada en este producto`,
+      });
+    }
+
+    variantes.splice(index, 1);
+    producto.variantes = [...variantes];
+    producto.changed('variantes', true);
+    await producto.save();
 
     return res.status(200).json({
       error: false,
-      mensaje: 'Variante desactivada exitosamente (soft delete)',
+      mensaje: 'Variante eliminada exitosamente',
+      producto,
     });
   } catch (error) {
     next(error);
@@ -392,15 +445,8 @@ export const eliminarVariante = async (req, res, next) => {
 
 export const getAlertasStock = async (req, res, next) => {
   try {
-    const productosSinVariantes = await Producto.findAll({
-      where: {
-        activo: true,
-        stock: {
-          [Op.ne]: null,
-          [Op.lte]: 5,
-        },
-      },
-      attributes: ['id', 'nombre', 'stock', 'precio'],
+    const productos = await Producto.findAll({
+      where: { activo: true },
       include: [
         {
           model: Categoria,
@@ -408,25 +454,49 @@ export const getAlertasStock = async (req, res, next) => {
           attributes: ['id', 'nombre'],
         },
       ],
+      order: [['nombre', 'ASC']],
     });
 
-    const variantesAlerta = await VarianteProducto.findAll({
-      where: {
-        activo: true,
-        stock: {
-          [Op.lte]: 5,
-        },
-      },
-      attributes: ['id', 'talla', 'color', 'stock', 'sku', 'producto_id'],
-      include: [
-        {
-          model: Producto,
-          as: 'producto',
-          attributes: ['id', 'nombre', 'precio'],
-          where: { activo: true },
-        },
-      ],
-    });
+    const productosSinVariantes = [];
+    const variantesAlerta = [];
+
+    for (const p of productos) {
+      const tieneVariantes = Array.isArray(p.variantes) && p.variantes.length > 0;
+
+      if (!tieneVariantes && p.stock !== null && p.stock <= 5) {
+        productosSinVariantes.push({
+          id: p.id,
+          nombre: p.nombre,
+          stock: p.stock,
+          precio: p.precio,
+          categoria: p.categoria,
+        });
+      }
+
+      if (tieneVariantes) {
+        for (const v of p.variantes) {
+          if (
+            v.activo !== false &&
+            v.stock !== null &&
+            v.stock !== undefined &&
+            Number(v.stock) <= 5
+          ) {
+            variantesAlerta.push({
+              producto_id: p.id,
+              producto_nombre: p.nombre,
+              precio:
+                v.precio_override !== null && v.precio_override !== undefined
+                  ? v.precio_override
+                  : p.precio,
+              sku: v.sku,
+              talla: v.talla,
+              color: v.color,
+              stock: v.stock,
+            });
+          }
+        }
+      }
+    }
 
     return res.status(200).json({
       error: false,

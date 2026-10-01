@@ -1,8 +1,8 @@
 /**
- * Utilidad para la generación de enlaces de WhatsApp (wa.me)
+ * Utilidad para la normalización y generación de enlaces de WhatsApp (wa.me)
  */
 
-export const generarLinkWhatsApp = (telefono, mensaje = '') => {
+export const normalizarTelefono = (telefono) => {
   if (!telefono || typeof telefono !== 'string') {
     return null;
   }
@@ -17,11 +17,22 @@ export const generarLinkWhatsApp = (telefono, mensaje = '') => {
     numeroLimpio = `58${numeroLimpio.slice(1)}`;
   }
 
+  return numeroLimpio;
+};
+
+export const generarLinkWhatsApp = (telefono, mensaje = '') => {
+  const numeroLimpio = normalizarTelefono(telefono);
+
+  if (!numeroLimpio) {
+    return null;
+  }
+
   const mensajeCodificado = encodeURIComponent(mensaje || '');
 
   return `https://wa.me/${numeroLimpio}?text=${mensajeCodificado}`;
 };
 
 export default {
+  normalizarTelefono,
   generarLinkWhatsApp,
 };

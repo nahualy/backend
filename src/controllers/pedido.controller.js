@@ -1,12 +1,15 @@
 import fs from 'fs';
-import { sequelize, Pedido, DetallePedido, Pago, Producto, VarianteProducto } from '../models/index.js';
+import { sequelize, Pedido, DetallePedido, Pago, Producto } from '../models/index.js';
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
+import { enviarWhatsApp } from '../services/whatsapp.service.js';
+import { enviarCorreo } from '../services/email.service.js';
 
 export const crearPedido = async (req, res, next) => {
   let transaction;
   try {
     const {
       nombre_cliente,
+      email_cliente,
       telefono_cliente,
       direccion_entrega,
       notas,
@@ -94,6 +97,7 @@ export const crearPedido = async (req, res, next) => {
     for (const item of parsedItems) {
       const productoId = parseInt(item.producto_id, 10);
       const cantidad = parseInt(item.cantidad, 10);
+      const itemVarianteSku = item.variante_sku || item.sku;
 
       const producto = await Producto.findByPk(productoId, {
         transaction,
@@ -109,48 +113,73 @@ export const crearPedido = async (req, res, next) => {
         });
       }
 
-      let variante = null;
-      if (item.variante_id) {
-        const varianteId = parseInt(item.variante_id, 10);
-        variante = await VarianteProducto.findOne({
-          where: { id: varianteId, producto_id: producto.id, activo: true },
-          transaction,
-          lock: true,
-        });
+      if (itemVarianteSku) {
+        const variantes = Array.isArray(producto.variantes)
+          ? producto.variantes.map((v) => ({ ...v }))
+          : [];
 
-        if (!variante) {
+        const index = variantes.findIndex(
+          (v) => v.sku && v.sku.trim().toLowerCase() === String(itemVarianteSku).trim().toLowerCase()
+        );
+
+        if (index === -1 || variantes[index].activo === false) {
           await transaction.rollback();
           limpiarArchivoSubido();
           return res.status(400).json({
             error: true,
-            mensaje: `La variante con ID ${varianteId} para el producto "${producto.nombre}" no existe o se encuentra inactiva`,
+            mensaje: `La variante con SKU "${itemVarianteSku}" para el producto "${producto.nombre}" no existe o se encuentra inactiva`,
           });
         }
 
-        if (variante.stock < cantidad) {
+        const variante = variantes[index];
+        const stockActual = Number(variante.stock) || 0;
+
+        if (stockActual < cantidad) {
           await transaction.rollback();
           limpiarArchivoSubido();
           const atributos = [variante.talla, variante.color].filter(Boolean).join(' / ');
           return res.status(400).json({
             error: true,
-            mensaje: `Stock insuficiente para el producto "${producto.nombre}" (Variante: ${atributos || `ID ${variante.id}`}). Disponibles: ${variante.stock}, solicitados: ${cantidad}`,
+            mensaje: `Stock insuficiente para el producto "${producto.nombre}" (Variante: ${atributos || variante.sku}). Disponibles: ${stockActual}, solicitados: ${cantidad}`,
           });
         }
 
-        variante.stock -= cantidad;
-        await variante.save({ transaction });
-      } else {
-        const variantesActivas = await VarianteProducto.count({
-          where: { producto_id: producto.id, activo: true },
-          transaction,
-        });
+        variantes[index].stock = stockActual - cantidad;
+        producto.variantes = [...variantes];
+        producto.changed('variantes', true);
+        await producto.save({ transaction });
 
-        if (variantesActivas > 0) {
+        const precioUnitario =
+          variante.precio_override !== null &&
+          variante.precio_override !== undefined &&
+          variante.precio_override !== ''
+            ? parseFloat(variante.precio_override)
+            : parseFloat(producto.precio);
+
+        totalCalculado += precioUnitario * cantidad;
+
+        itemsProcesados.push({
+          producto_id: producto.id,
+          variante_sku: variante.sku,
+          variante_snapshot: {
+            sku: variante.sku,
+            talla: variante.talla,
+            color: variante.color,
+            precio_override: variante.precio_override,
+          },
+          cantidad,
+          precio_unitario: precioUnitario,
+        });
+      } else {
+        const tieneVariantesActivas =
+          Array.isArray(producto.variantes) && producto.variantes.some((v) => v.activo !== false);
+
+        if (tieneVariantesActivas) {
           await transaction.rollback();
           limpiarArchivoSubido();
           return res.status(400).json({
             error: true,
-            mensaje: `El producto "${producto.nombre}" tiene variantes activas. Debe especificar una variante_id`,
+            mensaje: `El producto "${producto.nombre}" tiene variantes activas. Debe especificar una variante_sku`,
           });
         }
 
@@ -165,22 +194,24 @@ export const crearPedido = async (req, res, next) => {
 
         producto.stock -= cantidad;
         await producto.save({ transaction });
+
+        const precioUnitario = parseFloat(producto.precio);
+        totalCalculado += precioUnitario * cantidad;
+
+        itemsProcesados.push({
+          producto_id: producto.id,
+          variante_sku: null,
+          variante_snapshot: null,
+          cantidad,
+          precio_unitario: precioUnitario,
+        });
       }
-
-      const precioUnitario = parseFloat(producto.precio);
-      totalCalculado += precioUnitario * cantidad;
-
-      itemsProcesados.push({
-        producto_id: producto.id,
-        variante_id: variante ? variante.id : null,
-        cantidad,
-        precio_unitario: precioUnitario,
-      });
     }
 
     const nuevoPedido = await Pedido.create(
       {
         nombre_cliente: nombre_cliente.trim(),
+        email_cliente: email_cliente && email_cliente.trim() ? email_cliente.trim() : null,
         telefono_cliente: telefono_cliente.trim(),
         direccion_entrega: direccion_entrega.trim(),
         notas: notas ? notas.trim() : null,
@@ -195,7 +226,8 @@ export const crearPedido = async (req, res, next) => {
         {
           pedido_id: nuevoPedido.id,
           producto_id: item.producto_id,
-          variante_id: item.variante_id,
+          variante_sku: item.variante_sku,
+          variante_snapshot: item.variante_snapshot,
           cantidad: item.cantidad,
           precio_unitario: item.precio_unitario,
         },
@@ -224,7 +256,6 @@ export const crearPedido = async (req, res, next) => {
           as: 'detalles',
           include: [
             { model: Producto, as: 'producto', attributes: ['id', 'nombre', 'foto', 'precio'] },
-            { model: VarianteProducto, as: 'variante', attributes: ['id', 'talla', 'color', 'sku'] },
           ],
         },
         { model: Pago, as: 'pagos' },
@@ -232,21 +263,50 @@ export const crearPedido = async (req, res, next) => {
     });
 
     const totalFormateado = Number(nuevoPedido.total).toFixed(2);
-    const mensajeWhatsApp = `Hola ${nuevoPedido.nombre_cliente}, recibimos tu pedido #${nuevoPedido.id} por un total de $${totalFormateado}. Estamos verificando tu comprobante de pago.`;
+    const mensajeWhatsApp = `Hola ${nuevoPedido.nombre_cliente}, recibimos tu pedido #${nuevoPedido.id} por un total de $${totalFormateado}. Estamos verificando tu comprobante de pago. ¡Gracias por elegir El Chiringuito de Lukas! 🐾`;
     const link_whatsapp = generarLinkWhatsApp(nuevoPedido.telefono_cliente, mensajeWhatsApp);
+
+    let resWhatsApp = { exito: false };
+    try {
+      resWhatsApp = await enviarWhatsApp(nuevoPedido.telefono_cliente, mensajeWhatsApp);
+    } catch (_) {}
+
+    let resEmail = { exito: false };
+    if (nuevoPedido.email_cliente) {
+      try {
+        const asunto = `Pedido #${nuevoPedido.id} recibido con éxito - El Chiringuito de Lukas`;
+        const html = `
+          <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+            <h2 style="color: #1976d2;">¡Pedido Recibido! 🛍️</h2>
+            <p>Hola <strong>${nuevoPedido.nombre_cliente}</strong>,</p>
+            <p>Hemos recibido tu pedido <strong>#${nuevoPedido.id}</strong> por un total de <strong>$${totalFormateado}</strong>.</p>
+            <p>Nuestro equipo está revisando tu comprobante de pago. Te notificaremos en cuanto sea verificado y aprobado.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 0.9em; color: #666;">Gracias por comprar en <strong>El Chiringuito de Lukas</strong> 🐾</p>
+          </div>
+        `;
+        resEmail = await enviarCorreo(nuevoPedido.email_cliente, asunto, html);
+      } catch (_) {}
+    }
 
     return res.status(201).json({
       error: false,
       mensaje: 'Pedido creado exitosamente',
       pedido: pedidoCompleto,
+      whatsapp_enviado: Boolean(resWhatsApp.exito),
+      correo_enviado: Boolean(resEmail.exito),
       link_whatsapp,
     });
   } catch (error) {
     if (transaction) {
-      try { await transaction.rollback(); } catch (_) {}
+      try {
+        await transaction.rollback();
+      } catch (_) {}
     }
     if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
     }
     next(error);
   }
@@ -259,7 +319,9 @@ export const agregarPago = async (req, res, next) => {
 
     const limpiarArchivoSubido = () => {
       if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        try { fs.unlinkSync(req.file.path); } catch (_) {}
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (_) {}
       }
     };
 
@@ -315,7 +377,8 @@ export const agregarPago = async (req, res, next) => {
       limpiarArchivoSubido();
       return res.status(400).json({
         error: true,
-        mensaje: 'Ya existe un comprobante de pago pendiente de verificación para este pedido. Por favor espera la respuesta del administrador.',
+        mensaje:
+          'Ya existe un comprobante de pago pendiente de verificación para este pedido. Por favor espera la respuesta del administrador.',
       });
     }
 
@@ -335,7 +398,9 @@ export const agregarPago = async (req, res, next) => {
     });
   } catch (error) {
     if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
     }
     next(error);
   }
@@ -346,21 +411,20 @@ export const getPedidoPublico = async (req, res, next) => {
     const { id } = req.params;
 
     const pedido = await Pedido.findByPk(id, {
-      attributes: ['id', 'nombre_cliente', 'estado', 'total', 'created_at', 'updated_at'],
+      attributes: ['id', 'nombre_cliente', 'email_cliente', 'estado', 'total', 'created_at', 'updated_at'],
       include: [
         {
           model: DetallePedido,
           as: 'detalles',
-          attributes: ['id', 'cantidad', 'precio_unitario'],
+          attributes: ['id', 'cantidad', 'precio_unitario', 'variante_sku', 'variante_snapshot'],
           include: [
             { model: Producto, as: 'producto', attributes: ['id', 'nombre', 'foto'] },
-            { model: VarianteProducto, as: 'variante', attributes: ['id', 'talla', 'color', 'sku'] },
           ],
         },
         {
           model: Pago,
           as: 'pagos',
-          attributes: ['id', 'metodo', 'monto', 'estado', 'created_at', 'fecha_verificacion'],
+          attributes: ['id', 'metodo', 'monto', 'estado', 'motivo_rechazo', 'created_at', 'fecha_verificacion'],
         },
       ],
       order: [[{ model: Pago, as: 'pagos' }, 'created_at', 'ASC']],
