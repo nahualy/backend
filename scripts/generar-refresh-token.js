@@ -1,30 +1,20 @@
 import dotenv from 'dotenv';
+import http from 'http';
+import url from 'url';
+import fs from 'fs';
+import path from 'path';
 import { OAuth2Client } from 'google-auth-library';
-import readline from 'readline';
 
 dotenv.config();
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = 'urn:ietf:wg:oauth:2.0:oob';
+const PORT = 4500;
+const REDIRECT_URI = `http://localhost:${PORT}`;
 
-function pedirCodigo(pregunta) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(pregunta, (respuesta) => {
-      rl.close();
-      resolve(respuesta.trim());
-    });
-  });
-}
-
-async function generarRefreshToken() {
+async function main() {
   console.log('\n======================================================');
-  console.log(' Generador de Refresh Token de Google OAuth2 (Gmail) ');
+  console.log(' Generador Automático de Refresh Token de Gmail OAuth2 ');
   console.log('======================================================\n');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -36,45 +26,92 @@ async function generarRefreshToken() {
 
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/gmail.send'],
+    scope: [
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
     prompt: 'consent',
   });
 
-  console.log('Abre esta URL en tu navegador, inicia sesión con la cuenta de Gmail de la tienda, acepta los permisos, y copia el código que te muestre Google:');
-  console.log(`\n${authUrl}\n`);
+  const server = http.createServer(async (req, res) => {
+    try {
+      const parsedUrl = url.parse(req.url, true);
+      const code = parsedUrl.query.code;
 
-  try {
-    const codigo = await pedirCodigo('Pega el código de autorización aquí: ');
+      if (!code) {
+        res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h2>No se recibió el código de autorización de Google.</h2>');
+        return;
+      }
 
-    if (!codigo) {
-      console.error('\n❌ No se proporcionó ningún código. Operación cancelada.\n');
-      process.exit(1);
+      console.log('🔄 Código recibido, intercambiando por refresh token...');
+      const { tokens } = await oAuth2Client.getToken(code);
+      oAuth2Client.setCredentials(tokens);
+
+      let userEmail = 'KarlaMarch18@gmail.com';
+      try {
+        const userInfo = await oAuth2Client.request({
+          url: 'https://www.googleapis.com/oauth2/v2/userinfo',
+        });
+        if (userInfo.data && userInfo.data.email) {
+          userEmail = userInfo.data.email;
+        }
+      } catch (_) {}
+
+      if (tokens.refresh_token) {
+        console.log('\n✅ ¡REFRESH TOKEN OBTENIDO CON ÉXITO!\n');
+        console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
+        console.log(`GOOGLE_EMAIL_REMITENTE=${userEmail}\n`);
+
+        const envPath = path.resolve(process.cwd(), '.env');
+        let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+
+        if (envContent.includes('GOOGLE_REFRESH_TOKEN=')) {
+          envContent = envContent.replace(/GOOGLE_REFRESH_TOKEN=.*/g, `GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
+        } else {
+          envContent += `\nGOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`;
+        }
+
+        if (envContent.includes('GOOGLE_EMAIL_REMITENTE=')) {
+          envContent = envContent.replace(/GOOGLE_EMAIL_REMITENTE=.*/g, `GOOGLE_EMAIL_REMITENTE=${userEmail}`);
+        } else {
+          envContent += `\nGOOGLE_EMAIL_REMITENTE=${userEmail}`;
+        }
+
+        fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf8');
+        console.log('💾 Credenciales guardadas automáticamente en tu archivo .env!\n');
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`
+          <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: #2e7d32;">¡Autorización exitosa! 🎉</h1>
+            <p>Se ha generado y guardado tu <strong>GOOGLE_REFRESH_TOKEN</strong> y <strong>GOOGLE_EMAIL_REMITENTE</strong> en el archivo .env.</p>
+            <p>Ya puedes cerrar esta pestaña y volver a tu terminal.</p>
+          </div>
+        `);
+
+        setTimeout(() => {
+          server.close();
+          process.exit(0);
+        }, 1500);
+      } else {
+        console.warn('⚠️ No se devolvió refresh_token. Google solo lo envía la primera vez o con prompt="consent".');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h2>No se recibió un nuevo refresh_token. Intenta revocar los permisos previos en tu cuenta de Google.</h2>');
+      }
+    } catch (err) {
+      console.error('❌ Error intercambiando código:', err.message);
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<h2>Error: ${err.message}</h2>`);
     }
+  });
 
-    const { tokens } = await oAuth2Client.getToken(codigo);
-
-    if (tokens.refresh_token) {
-      console.log('\n======================================================');
-      console.log(' ¡REFRESH TOKEN GENERADO CON ÉXITO! ');
-      console.log('======================================================\n');
-      console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}\n`);
-      console.log('Copia este valor y pégalo en tu .env como GOOGLE_REFRESH_TOKEN (nunca lo compartas ni lo subas a git).\n');
-    } else {
-      console.log('\n⚠️ No se recibió un refresh_token en la respuesta.');
-      console.log('Esto suele suceder si la cuenta ya había otorgado permisos previamente.');
-      console.log('Revoca el acceso previo en https://myaccount.google.com/permissions o asegúrate de que prompt sea "consent".\n');
-    }
-  } catch (error) {
-    console.error('\n❌ Error al obtener el token:');
-    if (error.response && error.response.data && error.response.data.error_description) {
-      console.error(`Detalle: ${error.response.data.error_description}`);
-    } else if (error.message) {
-      console.error(`Detalle: ${error.message}`);
-    } else {
-      console.error('Código de autorización inválido o credenciales incorrectas.');
-    }
-    console.error('Verifica que el código no haya expirado y que tus credenciales en el archivo .env sean correctas.\n');
-  }
+  server.listen(PORT, () => {
+    console.log(`📡 Servidor de autorización escuchando en http://localhost:${PORT}`);
+    console.log('👉 Abre este enlace en tu navegador para autorizar Gmail:\n');
+    console.log(authUrl);
+    console.log('\n======================================================\n');
+  });
 }
 
-generarRefreshToken();
+main();

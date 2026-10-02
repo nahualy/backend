@@ -8,7 +8,7 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "sequelize": "sequelize",
-    "generar-token": "node scripts/obtener-token.js"
+    "generar-token": "node scripts/generar-refresh-token.js"
   },
   "keywords": [],
   "author": "",
