@@ -37,6 +37,7 @@ router.delete('/productos/:id/variantes/:sku', adminProductoController.eliminarV
 
 router.get('/pedidos', adminPedidoController.getPedidosAdmin);
 router.get('/pedidos/:id', adminPedidoController.getPedidoByIdAdmin);
+router.get('/pedidos/:id/nota-entrega', adminPedidoController.descargarNotaEntrega);
 router.put('/pedidos/:id/cancelar', adminPedidoController.cancelarPedido);
 router.put('/pedidos/:id/estado', adminPedidoController.actualizarEstadoPedido);
 

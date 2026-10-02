@@ -1,8 +1,11 @@
+import fs from 'fs';
+import path from 'path';
 import { sequelize, Pedido, DetallePedido, Pago, Producto, Usuario } from '../models/index.js';
 import { devolverStockPedido } from '../services/pedido.service.js';
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
 import { enviarWhatsApp } from '../services/whatsapp.service.js';
 import { enviarCorreo } from '../services/email.service.js';
+import { generarNotaEntregaPDF } from '../services/notaEntrega.service.js';
 
 export const getPedidosAdmin = async (req, res, next) => {
   try {
@@ -486,6 +489,43 @@ export const actualizarEstadoPedido = async (req, res, next) => {
   }
 };
 
+/**
+ * Descarga o genera la nota de entrega en PDF para un pedido.
+ * GET /api/admin/pedidos/:id/nota-entrega
+ * Query param opcional: ?regenerar=true
+ */
+export const descargarNotaEntrega = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const regenerar = req.query.regenerar === 'true';
+
+    // 1. Validar existencia del pedido ANTES de generar cualquier archivo
+    const pedido = await Pedido.findByPk(id);
+    if (!pedido) {
+      return res.status(404).json({
+        error: true,
+        mensaje: 'Pedido no encontrado',
+      });
+    }
+
+    const dirNotas = path.resolve(process.cwd(), 'uploads', 'notas-entrega');
+    const rutaArchivo = path.join(dirNotas, `pedido-${id}.pdf`);
+    const nombreDescarga = `nota-entrega-pedido-${id}.pdf`;
+
+    // 2. Si ya existe en disco y no se pide regenerar, servirlo directamente
+    if (fs.existsSync(rutaArchivo) && !regenerar) {
+      return res.download(rutaArchivo, nombreDescarga);
+    }
+
+    // 3. Generar o regenerar el PDF
+    await generarNotaEntregaPDF(id);
+
+    return res.download(rutaArchivo, nombreDescarga);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   getPedidosAdmin,
   getPedidoByIdAdmin,
@@ -494,4 +534,5 @@ export default {
   rechazarPago,
   cancelarPedido,
   actualizarEstadoPedido,
+  descargarNotaEntrega,
 };
