@@ -7,6 +7,10 @@ export default (sequelize) => {
         as: 'pagos_verificados',
         foreignKey: 'verificado_por',
       });
+      Usuario.hasMany(models.AuditLog, {
+        as: 'audit_logs',
+        foreignKey: 'usuario_id',
+      });
     }
   }
 

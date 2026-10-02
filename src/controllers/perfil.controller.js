@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { Usuario } from '../models/index.js';
+import { registrarAuditoria } from '../services/auditoria.service.js';
 
 /**
  * 1. Ver perfil del usuario autenticado
@@ -93,6 +94,17 @@ export const cambiarPassword = async (req, res, next) => {
     usuario.password_hash = nuevoHash;
     usuario.debe_cambiar_password = false;
     await usuario.save();
+
+    await registrarAuditoria({
+      usuario_id: usuarioId,
+      accion: 'editar',
+      entidad: 'Usuario',
+      entidad_id: usuarioId,
+      datos_anteriores: null,
+      datos_nuevos: null,
+      descripcion: 'El usuario cambió su propia contraseña',
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,

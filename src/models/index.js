@@ -7,6 +7,7 @@ import defineProducto from './Producto.js';
 import definePedido from './Pedido.js';
 import defineDetallePedido from './DetallePedido.js';
 import definePago from './Pago.js';
+import defineAuditLog from './AuditLog.js';
 
 const db = {};
 
@@ -17,6 +18,7 @@ const modelDefinitions = [
   definePedido,
   defineDetallePedido,
   definePago,
+  defineAuditLog,
 ];
 
 modelDefinitions.forEach((defineModel) => {
@@ -40,6 +42,7 @@ export const {
   Pedido,
   DetallePedido,
   Pago,
+  AuditLog,
 } = db;
 
 export { sequelize, Sequelize };

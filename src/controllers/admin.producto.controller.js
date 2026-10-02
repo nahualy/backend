@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { Producto, Categoria } from '../models/index.js';
 import { obtenerIdsCategoriasDescendientes } from './public.controller.js';
+import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const getProductosAdmin = async (req, res, next) => {
   try {
@@ -127,6 +128,16 @@ export const crearProducto = async (req, res, next) => {
       activo: true,
     });
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      entidad: 'Producto',
+      entidad_id: nuevoProducto.id,
+      datos_nuevos: nuevoProducto,
+      descripcion: `Creó el producto "${nuevoProducto.nombre}"`,
+      ip_origen: req.ip,
+    });
+
     return res.status(201).json({
       error: false,
       mensaje: 'Producto creado exitosamente',
@@ -149,6 +160,8 @@ export const actualizarProducto = async (req, res, next) => {
         mensaje: 'Producto no encontrado',
       });
     }
+
+    const datosAnteriores = producto.toJSON();
 
     if (nombre !== undefined) {
       if (!nombre || nombre.trim() === '') {
@@ -223,6 +236,17 @@ export const actualizarProducto = async (req, res, next) => {
 
     await producto.save();
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      entidad: 'Producto',
+      entidad_id: producto.id,
+      datos_anteriores: datosAnteriores,
+      datos_nuevos: producto,
+      descripcion: `Actualizó el producto "${producto.nombre}"`,
+      ip_origen: req.ip,
+    });
+
     return res.status(200).json({
       error: false,
       mensaje: 'Producto actualizado exitosamente',
@@ -245,8 +269,21 @@ export const eliminarProducto = async (req, res, next) => {
       });
     }
 
+    const datosAnteriores = producto.toJSON();
+
     producto.activo = false;
     await producto.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'eliminar',
+      entidad: 'Producto',
+      entidad_id: producto.id,
+      datos_anteriores: datosAnteriores,
+      datos_nuevos: { activo: false },
+      descripcion: `Desactivó el producto "${producto.nombre}"`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,
@@ -322,6 +359,16 @@ export const crearVariante = async (req, res, next) => {
     producto.changed('variantes', true);
     await producto.save();
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      entidad: 'VarianteProducto',
+      entidad_id: producto.id,
+      datos_nuevos: nuevaVariante,
+      descripcion: `Creó la variante con SKU "${nuevaVariante.sku}" para el producto "${producto.nombre}"`,
+      ip_origen: req.ip,
+    });
+
     return res.status(201).json({
       error: false,
       mensaje: 'Variante creada exitosamente',
@@ -361,6 +408,8 @@ export const actualizarVariante = async (req, res, next) => {
       });
     }
 
+    const varianteAnterior = { ...variantes[index] };
+
     if (talla !== undefined) {
       variantes[index].talla = talla ? talla.trim() : null;
     }
@@ -392,6 +441,17 @@ export const actualizarVariante = async (req, res, next) => {
     producto.variantes = [...variantes];
     producto.changed('variantes', true);
     await producto.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      entidad: 'VarianteProducto',
+      entidad_id: producto.id,
+      datos_anteriores: varianteAnterior,
+      datos_nuevos: variantes[index],
+      descripcion: `Actualizó la variante con SKU "${sku}" para el producto "${producto.nombre}"`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,
@@ -428,10 +488,23 @@ export const eliminarVariante = async (req, res, next) => {
       });
     }
 
+    const varianteEliminada = { ...variantes[index] };
+
     variantes.splice(index, 1);
     producto.variantes = [...variantes];
     producto.changed('variantes', true);
     await producto.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'eliminar',
+      entidad: 'VarianteProducto',
+      entidad_id: producto.id,
+      datos_anteriores: varianteEliminada,
+      datos_nuevos: { activo: false },
+      descripcion: `Eliminó la variante con SKU "${sku}" para el producto "${producto.nombre}"`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,

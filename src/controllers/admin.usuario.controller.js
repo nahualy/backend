@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import { Op } from 'sequelize';
 import { Usuario } from '../models/index.js';
 import { enviarCorreo } from '../services/email.service.js';
+import { registrarAuditoria } from '../services/auditoria.service.js';
 
 /**
  * 1. Crear usuario con rol 'personal'
@@ -80,6 +81,23 @@ export const crearUsuarioPersonal = async (req, res, next) => {
       console.warn('⚠️ No se pudo enviar el correo de bienvenida al nuevo usuario:', errCorreo.message);
       correo_bienvenida_enviado = false;
     }
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      entidad: 'Usuario',
+      entidad_id: nuevoUsuario.id,
+      datos_nuevos: {
+        id: nuevoUsuario.id,
+        nombre_completo: nuevoUsuario.nombre_completo,
+        email: nuevoUsuario.email,
+        rol: nuevoUsuario.rol,
+        activo: nuevoUsuario.activo,
+        debe_cambiar_password: nuevoUsuario.debe_cambiar_password,
+      },
+      descripcion: `Creó el usuario de personal "${nuevoUsuario.nombre_completo}" (${nuevoUsuario.email})`,
+      ip_origen: req.ip,
+    });
 
     return res.status(201).json({
       error: false,
@@ -168,6 +186,8 @@ export const actualizarUsuarioPersonal = async (req, res, next) => {
       });
     }
 
+    const datosAnteriores = usuario.toJSON();
+
     if (nombre_completo) {
       usuario.nombre_completo = nombre_completo.trim();
     }
@@ -194,6 +214,17 @@ export const actualizarUsuarioPersonal = async (req, res, next) => {
     }
 
     await usuario.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      entidad: 'Usuario',
+      entidad_id: usuario.id,
+      datos_anteriores: datosAnteriores,
+      datos_nuevos: usuario,
+      descripcion: `Actualizó el usuario "${usuario.nombre_completo}" (${usuario.email})`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,
@@ -242,6 +273,17 @@ export const desactivarUsuario = async (req, res, next) => {
     usuario.activo = false;
     await usuario.save();
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'desactivar',
+      entidad: 'Usuario',
+      entidad_id: usuario.id,
+      datos_anteriores: { activo: true },
+      datos_nuevos: { activo: false },
+      descripcion: `Desactivó el usuario "${usuario.nombre_completo}" (${usuario.email})`,
+      ip_origen: req.ip,
+    });
+
     return res.status(200).json({
       error: false,
       mensaje: 'Usuario desactivado con éxito',
@@ -285,6 +327,17 @@ export const reactivarUsuario = async (req, res, next) => {
 
     usuario.activo = true;
     await usuario.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'reactivar',
+      entidad: 'Usuario',
+      entidad_id: usuario.id,
+      datos_anteriores: { activo: false },
+      datos_nuevos: { activo: true },
+      descripcion: `Reactivó el usuario "${usuario.nombre_completo}" (${usuario.email})`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,

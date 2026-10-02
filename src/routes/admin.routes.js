@@ -6,6 +6,7 @@ import * as perfilController from '../controllers/perfil.controller.js';
 import * as estadisticasController from '../controllers/estadisticas.controller.js';
 import { verificarToken, verificarRol } from '../middlewares/auth.middleware.js';
 import { uploadProducto, uploadComprobante } from '../middlewares/upload.middleware.js';
+import * as auditoriaController from '../controllers/auditoria.controller.js';
 
 const router = express.Router();
 
@@ -16,13 +17,14 @@ router.use(verificarToken);
 router.get('/perfil', perfilController.verPerfil);
 router.put('/perfil/password', perfilController.cambiarPassword);
 
-// 3. Rutas de Gestión de Usuarios (EXCLUSIVAS para rol 'admin')
+// 3. Rutas de Gestión de Usuarios y Auditoría (EXCLUSIVAS para rol 'admin')
 router.post('/usuarios', verificarRol('admin'), adminUsuarioController.crearUsuarioPersonal);
 router.get('/usuarios', verificarRol('admin'), adminUsuarioController.listarUsuarios);
 router.put('/usuarios/:id', verificarRol('admin'), adminUsuarioController.actualizarUsuarioPersonal);
 router.put('/usuarios/:id/estado', verificarRol('admin'), adminUsuarioController.cambiarEstadoUsuario);
 router.delete('/usuarios/:id', verificarRol('admin'), adminUsuarioController.desactivarUsuario);
 router.put('/usuarios/:id/reactivar', verificarRol('admin'), adminUsuarioController.reactivarUsuario);
+router.get('/auditoria', verificarRol('admin'), auditoriaController.listarAuditoria);
 
 // 4. Resto de rutas de administración (productos, pedidos, pagos, estadísticas) - accesibles por 'admin' y 'personal'
 router.use(verificarRol('admin', 'personal'));

@@ -1,15 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { sequelize, Pedido, DetallePedido, Pago, Producto, Usuario } from '../models/index.js';
-import {
-  devolverStockPedido,
-  procesarYDescontarStock,
-  notificarPedidoConfirmado,
-} from '../services/pedido.service.js';
+import { devolverStockPedido } from '../services/pedido.service.js';
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
 import { enviarWhatsApp } from '../services/whatsapp.service.js';
 import { enviarCorreo } from '../services/email.service.js';
 import { generarNotaEntregaPDF } from '../services/notaEntrega.service.js';
+import { registrarAuditoria } from '../services/auditoria.service.js';
 
 export const getPedidosAdmin = async (req, res, next) => {
   try {
@@ -214,6 +211,17 @@ export const aprobarPago = async (req, res, next) => {
       } catch (_) {}
     }
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'aprobar',
+      entidad: 'Pago',
+      entidad_id: pago.id,
+      datos_anteriores: { estado: 'pendiente' },
+      datos_nuevos: { estado: 'aprobado', verificado_por: req.usuario.id },
+      descripcion: `Aprobó el pago #${pago.id} del pedido #${pedido.id}`,
+      ip_origen: req.ip,
+    });
+
     return res.status(200).json({
       error: false,
       mensaje: 'Pago aprobado y pedido confirmado exitosamente',
@@ -321,6 +329,17 @@ export const rechazarPago = async (req, res, next) => {
       } catch (_) {}
     }
 
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'rechazar',
+      entidad: 'Pago',
+      entidad_id: pago.id,
+      datos_anteriores: { estado: 'pendiente' },
+      datos_nuevos: { estado: 'rechazado', motivo_rechazo: motivoFinal },
+      descripcion: `Rechazó el pago #${pago.id} del pedido #${pedido.id} (motivo: ${motivoFinal})`,
+      ip_origen: req.ip,
+    });
+
     return res.status(200).json({
       error: false,
       mensaje: pedidoCancelado
@@ -363,6 +382,8 @@ export const cancelarPedido = async (req, res, next) => {
       });
     }
 
+    const estadoViejo = pedido.estado;
+
     transaction = await sequelize.transaction();
 
     pedido.estado = 'cancelado';
@@ -371,6 +392,17 @@ export const cancelarPedido = async (req, res, next) => {
     await devolverStockPedido(pedido.id, transaction);
 
     await transaction.commit();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'cancelar',
+      entidad: 'Pedido',
+      entidad_id: pedido.id,
+      datos_anteriores: { estado: estadoViejo },
+      datos_nuevos: { estado: 'cancelado' },
+      descripcion: `Canceló el pedido #${pedido.id}`,
+      ip_origen: req.ip,
+    });
 
     const mensajeWhatsApp = `Hola ${pedido.nombre_cliente}, tu pedido #${pedido.id} ha sido cancelado. Si tienes dudas, contáctanos.`;
     const link_whatsapp = generarLinkWhatsApp(pedido.telefono_cliente, mensajeWhatsApp);
@@ -480,8 +512,20 @@ export const actualizarEstadoPedido = async (req, res, next) => {
       });
     }
 
+    const estadoViejo = pedido.estado;
     pedido.estado = estado;
     await pedido.save();
+
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'cambiar_estado',
+      entidad: 'Pedido',
+      entidad_id: pedido.id,
+      datos_anteriores: { estado: estadoViejo },
+      datos_nuevos: { estado },
+      descripcion: `Cambió el estado del pedido #${pedido.id} de "${estadoViejo}" a "${estado}"`,
+      ip_origen: req.ip,
+    });
 
     return res.status(200).json({
       error: false,
@@ -730,6 +774,17 @@ export const crearPedidoManual = async (req, res, next) => {
           ],
         },
       ],
+    });
+
+    // Auditoría de la acción administrativa
+    await registrarAuditoria({
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      entidad: 'Pedido',
+      entidad_id: nuevoPedido.id,
+      datos_nuevos: pedidoCompleto,
+      descripcion: 'Pedido registrado manualmente (venta cerrada por WhatsApp)',
+      ip_origen: req.ip,
     });
 
     // Notificaciones automáticas (WhatsApp + Email si hay email registrado)
