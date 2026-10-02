@@ -44,6 +44,11 @@ export default (sequelize) => {
         allowNull: false,
         defaultValue: true,
       },
+      debe_cambiar_password: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+      },
     },
     {
       sequelize,

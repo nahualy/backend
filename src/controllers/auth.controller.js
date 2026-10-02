@@ -55,6 +55,7 @@ export const login = async (req, res, next) => {
         nombre_completo: usuario.nombre_completo,
         email: usuario.email,
         rol: usuario.rol,
+        debe_cambiar_password: usuario.debe_cambiar_password,
       },
     });
   } catch (error) {
