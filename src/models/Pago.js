@@ -67,6 +67,11 @@ export default (sequelize) => {
         type: DataTypes.JSONB,
         allowNull: true,
       },
+      origen: {
+        type: DataTypes.ENUM('checkout_publico', 'manual_whatsapp'),
+        allowNull: false,
+        defaultValue: 'checkout_publico',
+      },
     },
     {
       sequelize,

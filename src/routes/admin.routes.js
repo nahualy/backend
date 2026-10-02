@@ -5,7 +5,7 @@ import * as adminUsuarioController from '../controllers/admin.usuario.controller
 import * as perfilController from '../controllers/perfil.controller.js';
 import * as estadisticasController from '../controllers/estadisticas.controller.js';
 import { verificarToken, verificarRol } from '../middlewares/auth.middleware.js';
-import { uploadProducto } from '../middlewares/upload.middleware.js';
+import { uploadProducto, uploadComprobante } from '../middlewares/upload.middleware.js';
 
 const router = express.Router();
 
@@ -20,6 +20,7 @@ router.put('/perfil/password', perfilController.cambiarPassword);
 router.post('/usuarios', verificarRol('admin'), adminUsuarioController.crearUsuarioPersonal);
 router.get('/usuarios', verificarRol('admin'), adminUsuarioController.listarUsuarios);
 router.put('/usuarios/:id', verificarRol('admin'), adminUsuarioController.actualizarUsuarioPersonal);
+router.put('/usuarios/:id/estado', verificarRol('admin'), adminUsuarioController.cambiarEstadoUsuario);
 router.delete('/usuarios/:id', verificarRol('admin'), adminUsuarioController.desactivarUsuario);
 router.put('/usuarios/:id/reactivar', verificarRol('admin'), adminUsuarioController.reactivarUsuario);
 
@@ -40,6 +41,7 @@ router.delete('/productos/:id/variantes/:sku', adminProductoController.eliminarV
 
 // Pedidos
 router.get('/pedidos', adminPedidoController.getPedidosAdmin);
+router.post('/pedidos/manual', uploadComprobante.single('comprobante'), adminPedidoController.crearPedidoManual);
 router.get('/pedidos/:id', adminPedidoController.getPedidoByIdAdmin);
 router.get('/pedidos/:id/nota-entrega', adminPedidoController.descargarNotaEntrega);
 router.put('/pedidos/:id/cancelar', adminPedidoController.cancelarPedido);
@@ -47,6 +49,7 @@ router.put('/pedidos/:id/estado', adminPedidoController.actualizarEstadoPedido);
 
 // Pagos
 router.get('/pagos/pendientes', adminPedidoController.getPagosPendientes);
+router.put('/pagos/:id/verificar', adminPedidoController.verificarPago);
 router.put('/pagos/:id/aprobar', adminPedidoController.aprobarPago);
 router.put('/pagos/:id/rechazar', adminPedidoController.rechazarPago);
 

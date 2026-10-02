@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { sequelize, Pedido, DetallePedido, Pago, Producto, Usuario } from '../models/index.js';
-import { devolverStockPedido } from '../services/pedido.service.js';
+import {
+  devolverStockPedido,
+  procesarYDescontarStock,
+  notificarPedidoConfirmado,
+} from '../services/pedido.service.js';
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
 import { enviarWhatsApp } from '../services/whatsapp.service.js';
 import { enviarCorreo } from '../services/email.service.js';
@@ -526,13 +530,241 @@ export const descargarNotaEntrega = async (req, res, next) => {
   }
 };
 
+/**
+ * Verificar pago (aprobar o rechazar según req.body.accion)
+ * PUT /api/admin/pagos/:id/verificar
+ */
+export const verificarPago = async (req, res, next) => {
+  try {
+    const { accion, notas, motivo_rechazo } = req.body;
+    if (accion === 'aprobar') {
+      return aprobarPago(req, res, next);
+    }
+    if (accion === 'rechazar') {
+      if (notas && !motivo_rechazo) {
+        req.body.motivo_rechazo = notas;
+      }
+      return rechazarPago(req, res, next);
+    }
+    return res.status(400).json({
+      error: true,
+      mensaje: 'La acción debe ser "aprobar" o "rechazar"',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Registro manual de pedidos para ventas cerradas por WhatsApp
+ * POST /api/admin/pedidos/manual
+ * Protegido: admin y personal
+ * Middleware: uploadComprobante.single('comprobante')
+ */
+export const crearPedidoManual = async (req, res, next) => {
+  let transaction;
+
+  const limpiarArchivoSubido = () => {
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (_) {}
+    }
+  };
+
+  try {
+    const {
+      nombre_cliente,
+      email_cliente,
+      telefono_cliente,
+      direccion_entrega,
+      notas,
+      metodo,
+      monto,
+      items,
+    } = req.body;
+
+    if (!nombre_cliente || nombre_cliente.trim() === '') {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'El nombre del cliente es obligatorio' });
+    }
+
+    if (!telefono_cliente || telefono_cliente.trim() === '') {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'El teléfono del cliente es obligatorio' });
+    }
+
+    if (!direccion_entrega || direccion_entrega.trim() === '') {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'La dirección de entrega es obligatoria' });
+    }
+
+    const METODOS_PERMITIDOS = ['pago_movil', 'zelle', 'binance', 'paypal'];
+    if (!metodo || !METODOS_PERMITIDOS.includes(metodo)) {
+      limpiarArchivoSubido();
+      return res.status(400).json({
+        error: true,
+        mensaje: `El método de pago es inválido. Métodos permitidos: ${METODOS_PERMITIDOS.join(', ')}`,
+      });
+    }
+
+    if (monto === undefined || monto === null || isNaN(monto) || Number(monto) <= 0) {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'El monto del pago debe ser un número mayor a cero' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: true, mensaje: 'El comprobante de pago es obligatorio' });
+    }
+
+    if (!items) {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'Debe incluir al menos un producto en el pedido (campo items)' });
+    }
+
+    let parsedItems;
+    try {
+      parsedItems = typeof items === 'string' ? JSON.parse(items) : items;
+    } catch (parseError) {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'El campo items debe ser un array JSON válido' });
+    }
+
+    if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
+      limpiarArchivoSubido();
+      return res.status(400).json({ error: true, mensaje: 'El array de items debe contener al menos un elemento' });
+    }
+
+    for (const item of parsedItems) {
+      if (!item.producto_id || isNaN(parseInt(item.producto_id, 10))) {
+        limpiarArchivoSubido();
+        return res.status(400).json({ error: true, mensaje: 'Cada item debe tener un producto_id numérico válido' });
+      }
+      const cant = Number(item.cantidad);
+      if (!Number.isInteger(cant) || cant <= 0) {
+        limpiarArchivoSubido();
+        return res.status(400).json({ error: true, mensaje: 'Cada item debe tener una cantidad entera mayor a cero' });
+      }
+    }
+
+    transaction = await sequelize.transaction();
+
+    // Reutilizar la lógica compartida de validación y descuento de stock
+    let totalCalculado;
+    let itemsProcesados;
+    try {
+      const resultadoStock = await procesarYDescontarStock(parsedItems, transaction);
+      totalCalculado = resultadoStock.totalCalculado;
+      itemsProcesados = resultadoStock.itemsProcesados;
+    } catch (stockError) {
+      await transaction.rollback();
+      limpiarArchivoSubido();
+      return res.status(stockError.statusCode || 400).json({
+        error: true,
+        mensaje: stockError.message,
+      });
+    }
+
+    // Pedido se crea DIRECTAMENTE en estado 'confirmado'
+    const nuevoPedido = await Pedido.create(
+      {
+        nombre_cliente: nombre_cliente.trim(),
+        email_cliente: email_cliente && email_cliente.trim() ? email_cliente.trim() : null,
+        telefono_cliente: telefono_cliente.trim(),
+        direccion_entrega: direccion_entrega.trim(),
+        notas: notas ? notas.trim() : null,
+        total: parseFloat(totalCalculado.toFixed(2)),
+        estado: 'confirmado',
+      },
+      { transaction }
+    );
+
+    // Crear detalles del pedido
+    for (const item of itemsProcesados) {
+      await DetallePedido.create(
+        {
+          pedido_id: nuevoPedido.id,
+          producto_id: item.producto_id,
+          variante_sku: item.variante_sku,
+          variante_snapshot: item.variante_snapshot,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+        },
+        { transaction }
+      );
+    }
+
+    // Pago se crea DIRECTAMENTE en estado 'aprobado', origen 'manual_whatsapp', verificado por req.usuario.id
+    const comprobanteUrl = `/uploads/comprobantes/${req.file.filename}`;
+    await Pago.create(
+      {
+        pedido_id: nuevoPedido.id,
+        metodo,
+        monto: parseFloat(monto),
+        comprobante_url: comprobanteUrl,
+        estado: 'aprobado',
+        origen: 'manual_whatsapp',
+        verificado_por: req.usuario.id,
+        fecha_verificacion: new Date(),
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    // Consultar pedido completo con detalles y pagos
+    const pedidoCompleto = await Pedido.findByPk(nuevoPedido.id, {
+      include: [
+        {
+          model: DetallePedido,
+          as: 'detalles',
+          include: [
+            { model: Producto, as: 'producto', attributes: ['id', 'nombre', 'foto', 'precio'] },
+          ],
+        },
+        {
+          model: Pago,
+          as: 'pagos',
+          include: [
+            { model: Usuario, as: 'verificador', attributes: ['id', 'nombre_completo', 'email'] },
+          ],
+        },
+      ],
+    });
+
+    // Notificaciones automáticas (WhatsApp + Email si hay email registrado)
+    const notificaciones = await notificarPedidoConfirmado(pedidoCompleto);
+
+    return res.status(201).json({
+      error: false,
+      mensaje: 'Pedido manual registrado y confirmado exitosamente',
+      pedido: pedidoCompleto,
+      whatsapp_enviado: notificaciones.whatsapp_enviado,
+      correo_enviado: notificaciones.correo_enviado,
+      link_whatsapp: notificaciones.link_whatsapp,
+    });
+  } catch (error) {
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (_) {}
+    }
+    limpiarArchivoSubido();
+    next(error);
+  }
+};
+
 export default {
   getPedidosAdmin,
   getPedidoByIdAdmin,
   getPagosPendientes,
   aprobarPago,
   rechazarPago,
+  verificarPago,
   cancelarPedido,
   actualizarEstadoPedido,
   descargarNotaEntrega,
+  crearPedidoManual,
 };
+
+

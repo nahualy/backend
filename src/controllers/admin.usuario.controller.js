@@ -302,10 +302,33 @@ export const reactivarUsuario = async (req, res, next) => {
   }
 };
 
+/**
+ * 6. Cambiar estado de usuario (activar/desactivar)
+ * PUT /api/admin/usuarios/:id/estado
+ */
+export const cambiarEstadoUsuario = async (req, res, next) => {
+  try {
+    const { activo } = req.body;
+    if (activo === true) {
+      return reactivarUsuario(req, res, next);
+    }
+    if (activo === false) {
+      return desactivarUsuario(req, res, next);
+    }
+    return res.status(400).json({
+      error: true,
+      mensaje: 'El campo "activo" debe ser un booleano (true o false)',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export default {
   crearUsuarioPersonal,
   listarUsuarios,
   actualizarUsuarioPersonal,
   desactivarUsuario,
   reactivarUsuario,
+  cambiarEstadoUsuario,
 };

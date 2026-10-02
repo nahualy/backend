@@ -3,6 +3,7 @@ import { sequelize, Pedido, DetallePedido, Pago, Producto } from '../models/inde
 import { generarLinkWhatsApp } from '../utils/whatsapp.util.js';
 import { enviarWhatsApp } from '../services/whatsapp.service.js';
 import { enviarCorreo } from '../services/email.service.js';
+import { procesarYDescontarStock } from '../services/pedido.service.js';
 
 export const crearPedido = async (req, res, next) => {
   let transaction;
@@ -91,121 +92,19 @@ export const crearPedido = async (req, res, next) => {
 
     transaction = await sequelize.transaction();
 
-    let totalCalculado = 0;
-    const itemsProcesados = [];
-
-    for (const item of parsedItems) {
-      const productoId = parseInt(item.producto_id, 10);
-      const cantidad = parseInt(item.cantidad, 10);
-      const itemVarianteSku = item.variante_sku || item.sku;
-
-      const producto = await Producto.findByPk(productoId, {
-        transaction,
-        lock: true,
+    let totalCalculado;
+    let itemsProcesados;
+    try {
+      const resultadoStock = await procesarYDescontarStock(parsedItems, transaction);
+      totalCalculado = resultadoStock.totalCalculado;
+      itemsProcesados = resultadoStock.itemsProcesados;
+    } catch (stockError) {
+      await transaction.rollback();
+      limpiarArchivoSubido();
+      return res.status(stockError.statusCode || 400).json({
+        error: true,
+        mensaje: stockError.message,
       });
-
-      if (!producto || !producto.activo) {
-        await transaction.rollback();
-        limpiarArchivoSubido();
-        return res.status(400).json({
-          error: true,
-          mensaje: `El producto con ID ${productoId} no existe o se encuentra inactivo`,
-        });
-      }
-
-      if (itemVarianteSku) {
-        const variantes = Array.isArray(producto.variantes)
-          ? producto.variantes.map((v) => ({ ...v }))
-          : [];
-
-        const index = variantes.findIndex(
-          (v) => v.sku && v.sku.trim().toLowerCase() === String(itemVarianteSku).trim().toLowerCase()
-        );
-
-        if (index === -1 || variantes[index].activo === false) {
-          await transaction.rollback();
-          limpiarArchivoSubido();
-          return res.status(400).json({
-            error: true,
-            mensaje: `La variante con SKU "${itemVarianteSku}" para el producto "${producto.nombre}" no existe o se encuentra inactiva`,
-          });
-        }
-
-        const variante = variantes[index];
-        const stockActual = Number(variante.stock) || 0;
-
-        if (stockActual < cantidad) {
-          await transaction.rollback();
-          limpiarArchivoSubido();
-          const atributos = [variante.talla, variante.color].filter(Boolean).join(' / ');
-          return res.status(400).json({
-            error: true,
-            mensaje: `Stock insuficiente para el producto "${producto.nombre}" (Variante: ${atributos || variante.sku}). Disponibles: ${stockActual}, solicitados: ${cantidad}`,
-          });
-        }
-
-        variantes[index].stock = stockActual - cantidad;
-        producto.variantes = [...variantes];
-        producto.changed('variantes', true);
-        await producto.save({ transaction });
-
-        const precioUnitario =
-          variante.precio_override !== null &&
-          variante.precio_override !== undefined &&
-          variante.precio_override !== ''
-            ? parseFloat(variante.precio_override)
-            : parseFloat(producto.precio);
-
-        totalCalculado += precioUnitario * cantidad;
-
-        itemsProcesados.push({
-          producto_id: producto.id,
-          variante_sku: variante.sku,
-          variante_snapshot: {
-            sku: variante.sku,
-            talla: variante.talla,
-            color: variante.color,
-            precio_override: variante.precio_override,
-          },
-          cantidad,
-          precio_unitario: precioUnitario,
-        });
-      } else {
-        const tieneVariantesActivas =
-          Array.isArray(producto.variantes) && producto.variantes.some((v) => v.activo !== false);
-
-        if (tieneVariantesActivas) {
-          await transaction.rollback();
-          limpiarArchivoSubido();
-          return res.status(400).json({
-            error: true,
-            mensaje: `El producto "${producto.nombre}" tiene variantes activas. Debe especificar una variante_sku`,
-          });
-        }
-
-        if (producto.stock === null || producto.stock < cantidad) {
-          await transaction.rollback();
-          limpiarArchivoSubido();
-          return res.status(400).json({
-            error: true,
-            mensaje: `Stock insuficiente para el producto "${producto.nombre}". Disponibles: ${producto.stock !== null ? producto.stock : 0}, solicitados: ${cantidad}`,
-          });
-        }
-
-        producto.stock -= cantidad;
-        await producto.save({ transaction });
-
-        const precioUnitario = parseFloat(producto.precio);
-        totalCalculado += precioUnitario * cantidad;
-
-        itemsProcesados.push({
-          producto_id: producto.id,
-          variante_sku: null,
-          variante_snapshot: null,
-          cantidad,
-          precio_unitario: precioUnitario,
-        });
-      }
     }
 
     const nuevoPedido = await Pedido.create(
@@ -243,6 +142,7 @@ export const crearPedido = async (req, res, next) => {
         monto: parseFloat(monto),
         comprobante_url: comprobanteUrl,
         estado: 'pendiente',
+        origen: 'checkout_publico',
       },
       { transaction }
     );
