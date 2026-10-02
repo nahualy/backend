@@ -8,6 +8,7 @@ const OAuth2 = google.auth.OAuth2;
 
 export const enviarCorreo = async (destinatario, asunto, mensajeHtml) => {
   try {
+    dotenv.config();
     if (!destinatario || typeof destinatario !== 'string' || !destinatario.trim()) {
       return { exito: false, error: 'Sin destinatario' };
     }
