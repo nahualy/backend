@@ -1344,6 +1344,76 @@
             "description": "Activa o desactiva (soft delete) una cuenta de personal mediante el booleano \"activo\". REGLA CRÍTICA: SOLO accesible por rol \"admin\". El usuario administrador NUNCA puede desactivarse a sí mismo (responde 403 Forbidden)."
           },
           "response": []
+        },
+        {
+          "name": "Consultar Historial de Auditoría",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/admin/auditoria?entidad=Producto&accion=editar&pagina=1&limite=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "auditoria"
+              ],
+              "query": [
+                {
+                  "key": "usuario_id",
+                  "value": "1",
+                  "description": "Filtrar por ID de usuario (opcional)",
+                  "disabled": true
+                },
+                {
+                  "key": "entidad",
+                  "value": "Producto",
+                  "description": "Filtrar por entidad (ej: Producto, Pedido, Pago, Usuario) (opcional)"
+                },
+                {
+                  "key": "accion",
+                  "value": "editar",
+                  "description": "Filtrar por acción (ej: crear, editar, eliminar, aprobar, rechazar, cancelar, cambiar_estado) (opcional)"
+                },
+                {
+                  "key": "fecha_desde",
+                  "value": "2026-10-01",
+                  "description": "Fecha inicio YYYY-MM-DD (opcional)",
+                  "disabled": true
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "2026-10-31",
+                  "description": "Fecha fin YYYY-MM-DD (opcional)",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "description": "Número de página (default: 1)"
+                },
+                {
+                  "key": "limite",
+                  "value": "20",
+                  "description": "Cantidad de logs por página (default: 20)"
+                }
+              ]
+            },
+            "description": "Consulta la bitácora de auditoría de acciones administrativas sensibles con paginación y filtros por usuario, entidad, acción y rango de fechas. Incluye los datos del usuario que realizó la acción. REGLA: SOLO accesible por rol \"admin\" (personal recibe 403 Forbidden)."
+          },
+          "response": []
         }
       ]
     },
